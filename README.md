@@ -46,6 +46,8 @@ OmniParser v2 automatically analyzes screenshots and images to:
 
 **Install Cuda 12.8**
 
+**Download Weights**
+https://drive.google.com/file/d/1Otyc6swsZkzNyDHdPvPIXbyCky6QhNkg/view?usp=sharing
 ```bash
 # Install Torch
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
