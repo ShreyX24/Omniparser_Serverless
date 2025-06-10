@@ -38,14 +38,27 @@ class OmniParserGUI:
         self.som_model = None
         self.caption_model_processor = None
         self.processed_image = None
+        self.original_image = None
         self.parsed_content_list = []
         self.label_coordinates = []
+        
+        # Image display variables
+        self.zoom_factor = 1.0
+        self.current_image = None
+        self.max_display_size = 800
+        
+        # Track if parameters changed since last processing
+        self.parameters_changed = False
+        self.last_parameters = None
         
         # Initialize models
         self.init_models()
         
         # Create GUI elements
         self.create_widgets()
+        
+        # Bind window resize event
+        self.root.bind('<Configure>', self.on_window_resize)
         
     def init_models(self):
         """Initialize the ML models"""
@@ -145,17 +158,20 @@ class OmniParserGUI:
         
         self.use_paddleocr_var = ctk.BooleanVar(value=True)
         self.paddleocr_checkbox = ctk.CTkCheckBox(ocr_frame, text="Use PaddleOCR", 
-                                                variable=self.use_paddleocr_var)
+                                                variable=self.use_paddleocr_var,
+                                                command=self.on_parameter_change)
         self.paddleocr_checkbox.pack(anchor="w", padx=15, pady=5)
         
         self.paragraph_mode_var = ctk.BooleanVar(value=False)
         self.paragraph_checkbox = ctk.CTkCheckBox(ocr_frame, text="Paragraph Mode", 
-                                                variable=self.paragraph_mode_var)
+                                                variable=self.paragraph_mode_var,
+                                                command=self.on_parameter_change)
         self.paragraph_checkbox.pack(anchor="w", padx=15, pady=5)
         
         self.use_local_semantics_var = ctk.BooleanVar(value=True)
         self.local_semantics_checkbox = ctk.CTkCheckBox(ocr_frame, text="Use Local Semantics", 
-                                                      variable=self.use_local_semantics_var)
+                                                      variable=self.use_local_semantics_var,
+                                                      command=self.on_parameter_change)
         self.local_semantics_checkbox.pack(anchor="w", padx=15, pady=(5, 15))
         
         # Process button
@@ -202,10 +218,46 @@ class OmniParserGUI:
         self.setup_elements_tab()
         
     def setup_image_tab(self):
-        """Setup the annotated image tab"""
+        """Setup the annotated image tab with zoom controls"""
+        # Create main frame for image tab
+        main_frame = ctk.CTkFrame(self.tab_image)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create control buttons frame
+        controls_frame = ctk.CTkFrame(main_frame)
+        controls_frame.pack(fill="x", padx=5, pady=(5, 10))
+        
+        # Zoom controls
+        zoom_label = ctk.CTkLabel(controls_frame, text="Image Controls:", font=ctk.CTkFont(weight="bold"))
+        zoom_label.pack(side="left", padx=(10, 20))
+        
+        self.zoom_in_btn = ctk.CTkButton(controls_frame, text="Zoom In", width=80,
+                                        command=self.zoom_in)
+        self.zoom_in_btn.pack(side="left", padx=5)
+        
+        self.zoom_out_btn = ctk.CTkButton(controls_frame, text="Zoom Out", width=80,
+                                         command=self.zoom_out)
+        self.zoom_out_btn.pack(side="left", padx=5)
+        
+        self.fit_screen_btn = ctk.CTkButton(controls_frame, text="Fit to Screen", width=100,
+                                           command=self.fit_to_screen)
+        self.fit_screen_btn.pack(side="left", padx=5)
+        
+        self.actual_size_btn = ctk.CTkButton(controls_frame, text="Actual Size", width=100,
+                                            command=self.actual_size)
+        self.actual_size_btn.pack(side="left", padx=5)
+        
+        self.stretch_btn = ctk.CTkButton(controls_frame, text="Stretch to Fill", width=120,
+                                        command=self.stretch_to_fill)
+        self.stretch_btn.pack(side="left", padx=5)
+        
+        # Zoom level display
+        self.zoom_level_label = ctk.CTkLabel(controls_frame, text="Zoom: 100%")
+        self.zoom_level_label.pack(side="right", padx=(20, 10))
+        
         # Create scrollable frame for image
-        self.image_scroll_frame = ctk.CTkScrollableFrame(self.tab_image)
-        self.image_scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.image_scroll_frame = ctk.CTkScrollableFrame(main_frame)
+        self.image_scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
         self.image_label = ctk.CTkLabel(self.image_scroll_frame, text="No image processed yet")
         self.image_label.pack(expand=True)
@@ -226,7 +278,7 @@ class OmniParserGUI:
         self.tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
         
         # Configure column headings and widths
-        column_widths = {'ID': 50, 'Type': 100, 'Text': 200, 'X1': 60, 'Y1': 60, 'X2': 60, 'Y2': 60, 'Confidence': 80}
+        column_widths = {'ID': 50, 'Type': 100, 'Text': 300, 'X1': 60, 'Y1': 60, 'X2': 60, 'Y2': 60, 'Confidence': 80}
         for col in columns:
             self.tree.heading(col, text=col)
             self.tree.column(col, width=column_widths[col], anchor='center')
@@ -246,6 +298,117 @@ class OmniParserGUI:
                                  command=self.export_to_csv)
         export_btn.pack(pady=10)
         
+    def zoom_in(self):
+        """Zoom in the image"""
+        self.zoom_factor *= 1.25
+        self.update_image_display()
+        
+    def zoom_out(self):
+        """Zoom out the image"""
+        self.zoom_factor /= 1.25
+        if self.zoom_factor < 0.1:
+            self.zoom_factor = 0.1
+        self.update_image_display()
+        
+    def fit_to_screen(self):
+        """Fit image to available screen space"""
+        if self.original_image:
+            # Force update to get actual frame dimensions
+            self.root.update_idletasks()
+            
+            # Get actual scrollable frame dimensions
+            try:
+                frame_width = self.image_scroll_frame.winfo_width()
+                frame_height = self.image_scroll_frame.winfo_height()
+                
+                # If frame hasn't been rendered yet, use reasonable defaults
+                if frame_width <= 1 or frame_height <= 1:
+                    frame_width = 1000
+                    frame_height = 700
+                
+                # Account for padding and scrollbars
+                available_width = max(frame_width - 40, 400)
+                available_height = max(frame_height - 40, 300)
+                
+            except:
+                # Fallback to larger defaults if there's an error
+                available_width = 1000
+                available_height = 700
+            
+            img_width, img_height = self.original_image.size
+            
+            # Calculate zoom factor to fit both dimensions
+            zoom_x = available_width / img_width
+            zoom_y = available_height / img_height
+            self.zoom_factor = min(zoom_x, zoom_y)  # Allow zooming beyond 100% if needed
+            
+            # Ensure minimum zoom
+            if self.zoom_factor < 0.1:
+                self.zoom_factor = 0.1
+            
+            self.update_image_display()
+            
+    def actual_size(self):
+        """Show image at actual size"""
+        self.zoom_factor = 1.0
+        self.update_image_display()
+        
+    def stretch_to_fill(self):
+        """Stretch image to fill available space (ignores aspect ratio)"""
+        if self.original_image:
+            # Force update to get actual frame dimensions
+            self.root.update_idletasks()
+            
+            # Get actual scrollable frame dimensions
+            try:
+                frame_width = self.image_scroll_frame.winfo_width()
+                frame_height = self.image_scroll_frame.winfo_height()
+                
+                # If frame hasn't been rendered yet, use reasonable defaults
+                if frame_width <= 1 or frame_height <= 1:
+                    frame_width = 1000
+                    frame_height = 700
+                
+                # Account for padding and scrollbars
+                available_width = max(frame_width - 40, 400)
+                available_height = max(frame_height - 40, 300)
+                
+            except:
+                # Fallback to larger defaults if there's an error
+                available_width = 1000
+                available_height = 700
+            
+            img_width, img_height = self.original_image.size
+            
+            # Calculate zoom factor to fill space (use the larger ratio)
+            zoom_x = available_width / img_width
+            zoom_y = available_height / img_height
+            self.zoom_factor = max(zoom_x, zoom_y)  # Use max to fill space
+            
+            # Ensure minimum zoom
+            if self.zoom_factor < 0.1:
+                self.zoom_factor = 0.1
+            
+            self.update_image_display()
+        
+    def update_image_display(self):
+        """Update the image display with current zoom factor"""
+        if self.original_image:
+            # Calculate new size
+            width = int(self.original_image.size[0] * self.zoom_factor)
+            height = int(self.original_image.size[1] * self.zoom_factor)
+            
+            # Resize image
+            resized_image = self.original_image.resize((width, height), Image.Resampling.LANCZOS)
+            
+            # Convert to PhotoImage and display
+            photo = ImageTk.PhotoImage(resized_image)
+            self.image_label.configure(image=photo, text="")
+            self.image_label.image = photo  # Keep a reference
+            
+            # Update zoom level display
+            self.zoom_level_label.configure(text=f"Zoom: {int(self.zoom_factor * 100)}%")
+        
     def manual_refresh_models(self):
         """Manually refresh models when button is clicked"""
         try:
@@ -264,7 +427,7 @@ class OmniParserGUI:
             self.refresh_btn.configure(state="normal", text="Refresh Models")
     
     def refresh_models(self):
-        """Refresh models to clear any state issues"""
+        """Refresh models to clear any state issues - EXACT COPY from working version"""
         try:
             # Clear CUDA cache
             if torch.cuda.is_available():
@@ -287,14 +450,39 @@ class OmniParserGUI:
     def update_box_threshold_label(self, value):
         """Update box threshold label"""
         self.box_threshold_label.configure(text=f"{value:.3f}")
+        self.parameters_changed = True
         
     def update_iou_threshold_label(self, value):
         """Update IOU threshold label"""
         self.iou_threshold_label.configure(text=f"{value:.3f}")
+        self.parameters_changed = True
         
     def update_text_threshold_label(self, value):
         """Update text threshold label"""
         self.text_threshold_label.configure(text=f"{value:.3f}")
+        self.parameters_changed = True
+        
+    def on_parameter_change(self):
+        """Called when any parameter changes"""
+        self.parameters_changed = True
+        
+    def on_window_resize(self, event):
+        """Called when window is resized"""
+        # Only handle resize for the main window, not child widgets
+        if event.widget == self.root and self.original_image:
+            # Small delay to avoid too many rapid calls during resize
+            self.root.after(200, self.stretch_to_fill)
+            
+    def get_current_parameters(self):
+        """Get current parameter values as a tuple for comparison"""
+        return (
+            self.box_threshold_var.get(),
+            self.iou_threshold_var.get(),
+            self.text_threshold_var.get(),
+            self.use_paddleocr_var.get(),
+            self.paragraph_mode_var.get(),
+            self.use_local_semantics_var.get()
+        )
         
     def select_image(self):
         """Open file dialog to select image"""
@@ -328,9 +516,22 @@ class OmniParserGUI:
         thread.start()
         
     def _process_image_thread(self):
-        """Process image in separate thread"""
+        """Process image in separate thread with automatic model refresh when needed"""
         try:
-            # Clear CUDA cache and reset model state
+            # Check if parameters have changed and auto-refresh if needed
+            current_params = self.get_current_parameters()
+            needs_refresh = (self.parameters_changed or 
+                           self.last_parameters is None or 
+                           current_params != self.last_parameters)
+            
+            if needs_refresh:
+                self.root.after(0, lambda: self.status_label.configure(text="Auto-refreshing models for parameter changes..."))
+                # Use the EXACT same refresh method that works manually
+                self.refresh_models()
+                self.parameters_changed = False
+                self.last_parameters = current_params
+            
+            # Clear CUDA cache and reset model state (like in working version)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
@@ -349,7 +550,7 @@ class OmniParserGUI:
                 'thickness': max(int(3 * box_overlay_ratio), 1),
             }
             
-            # OCR processing
+            # OCR processing (exactly like working version)
             ocr_bbox_rslt, is_goal_filtered = check_ocr_box(
                 self.image_path, 
                 display_img=False, 
@@ -366,7 +567,7 @@ class OmniParserGUI:
             self.root.after(0, lambda: self.progress_bar.set(0.6))
             self.root.after(0, lambda: self.status_label.configure(text="Generating annotations..."))
             
-            # Main processing with model state refresh
+            # Main processing with model state refresh (exactly like working version)
             with torch.no_grad():  # Ensure no gradients are computed
                 dino_labled_img, label_coordinates, parsed_content_list = get_som_labeled_img(
                     self.image_path, 
@@ -402,7 +603,7 @@ class OmniParserGUI:
             error_msg = str(e)
             print(f"Processing error: {error_msg}")  # For debugging
             
-            # If it's a CUDA/model error, try to refresh models
+            # Use the EXACT same error handling as the working version
             if "primitive" in error_msg.lower() or "cuda" in error_msg.lower():
                 self.root.after(0, lambda: self.status_label.configure(text="Refreshing models..."))
                 try:
@@ -423,18 +624,13 @@ class OmniParserGUI:
             # Update annotated image
             if self.processed_image:
                 image_data = base64.b64decode(self.processed_image)
-                image = Image.open(io.BytesIO(image_data))
+                self.original_image = Image.open(io.BytesIO(image_data))
+                self.current_image = self.original_image.copy()
                 
-                # Resize image if too large
-                max_size = 800
-                if max(image.size) > max_size:
-                    ratio = max_size / max(image.size)
-                    new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-                    image = image.resize(new_size, Image.Resampling.LANCZOS)
-                
-                photo = ImageTk.PhotoImage(image)
-                self.image_label.configure(image=photo, text="")
-                self.image_label.image = photo  # Keep a reference
+                # Reset zoom and display image with stretch to fill by default
+                self.zoom_factor = 1.0
+                # Use after_idle to ensure the frame is properly rendered before stretching
+                self.root.after_idle(self.stretch_to_fill)
                 
             # Update parsed content
             if self.parsed_content_list:
@@ -458,19 +654,45 @@ class OmniParserGUI:
             
         # Add new items
         for i, element in enumerate(self.parsed_content_list):
-            # Extract relevant information
+            # Extract relevant information with better text handling
             element_id = i + 1
             element_type = element.get('type', 'Unknown')
-            text = element.get('text', '')[:50] + '...' if len(element.get('text', '')) > 50 else element.get('text', '')
+            
+            # Try multiple possible keys for text content
+            text_content = ""
+            possible_text_keys = ['text', 'label', 'caption', 'description', 'content', 'value']
+            for key in possible_text_keys:
+                if key in element and element[key]:
+                    text_content = str(element[key])
+                    break
+            
+            # If still no text, check if element itself is a string or has nested text
+            if not text_content:
+                if isinstance(element, str):
+                    text_content = element
+                elif 'attributes' in element and isinstance(element['attributes'], dict):
+                    for key in possible_text_keys:
+                        if key in element['attributes'] and element['attributes'][key]:
+                            text_content = str(element['attributes'][key])
+                            break
+            
+            # Truncate long text for display
+            display_text = text_content[:100] + '...' if len(text_content) > 100 else text_content
             
             # Get bounding box coordinates
-            bbox = element.get('bbox', [0, 0, 0, 0])
-            x1, y1, x2, y2 = bbox[:4] if len(bbox) >= 4 else [0, 0, 0, 0]
+            bbox = element.get('bbox', element.get('coordinates', element.get('box', [0, 0, 0, 0])))
+            if isinstance(bbox, dict):
+                x1 = bbox.get('x1', bbox.get('left', 0))
+                y1 = bbox.get('y1', bbox.get('top', 0))
+                x2 = bbox.get('x2', bbox.get('right', 0))
+                y2 = bbox.get('y2', bbox.get('bottom', 0))
+            else:
+                x1, y1, x2, y2 = bbox[:4] if len(bbox) >= 4 else [0, 0, 0, 0]
             
-            confidence = element.get('confidence', 0)
+            confidence = element.get('confidence', element.get('score', 0))
             
             self.tree.insert('', 'end', values=(
-                element_id, element_type, text, 
+                element_id, element_type, display_text, 
                 f"{x1:.3f}", f"{y1:.3f}", f"{x2:.3f}", f"{y2:.3f}", 
                 f"{confidence:.3f}"
             ))
