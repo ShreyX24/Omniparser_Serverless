@@ -1,6 +1,6 @@
 # OmniParser v2 GUI - Advanced UI Analysis Tool
 
-![OmniParser v2](https://img.shields.io/badge/OmniParser-v2.0-blue) ![Python](https://img.shields.io/badge/Python-3.8+-green) ![CUDA](https://img.shields.io/badge/CUDA-Supported-orange)
+![OmniParser v2](https://img.shields.io/badge/OmniParser-v2.0-blue) ![Python](https://img.shields.io/badge/Python-3.13+-green) ![CUDA](https://img.shields.io/badge/CUDA-Supported-orange)
 
 A powerful, user-friendly GUI application for automated UI element detection, OCR, and semantic analysis. Perfect for analyzing gaming interfaces, application UIs, and any visual interface elements.
 
