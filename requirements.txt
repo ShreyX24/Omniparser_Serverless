@@ -15,7 +15,7 @@ einops==0.8.0
 # OCR Libraries
 easyocr
 paddlepaddle
-
+openai
 transformers==4.37.2
 paddleocr==2.7.3
 
